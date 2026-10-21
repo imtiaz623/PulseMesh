@@ -1,4 +1,44 @@
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
-            sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>' "$MANIFEST"
-          fi
+name: Build APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Unpack project and prepare Android
+        run: |
+          test -f pulsemesh.zip || { echo "pulsemesh.zip is missing from the repo root"; exit 1; }
+          rm -rf _build _scaffold
+          mkdir _build
+          unzip -q pulsemesh.zip -d _build
+          flutter create --org com.pulsemesh --project-name pulsemesh --platforms android _scaffold
+          (cd _scaffold && find . -type f) | while read -r f; do
+            if [ ! -e "_build/pulsemesh/$f" ]; then
+              mkdir -p "$(dirname "_build/pulsemesh/$f")"
+              cp "_scaffold/$f" "_build/pulsemesh/$f"
+            fi
+          done
+          rm -rf _build/pulsemesh/test
+          cd _build/pulsemesh
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 24/' android/app/build.gradle.kts || true
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/' android/app/build.gradle || true
+          python3 -c "import xml.dom.minidom as x; x.parse('android/app/src/main/AndroidManifest.xml'); print('manifest OK')"
+      - name: Build release APK
+        working-directory: _build/pulsemesh
+        run: |
+          flutter pub get
+          flutter build apk --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PulseMesh-apk
+          path: _build/pulsemesh/build/app/outputs/flutter-apk/app-release.apk
