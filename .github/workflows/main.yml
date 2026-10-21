@@ -1,55 +1,50 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+name: Build APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
 
-    <!-- ===== Nearby Connections permissions (per Google's current guidance) ===== -->
-    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="31" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="31" />
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
-        android:usesPermissionFlags="neverForLocation" android:minSdkVersion="31" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" android:minSdkVersion="31" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" android:minSdkVersion="31" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
-        android:minSdkVersion="29" android:maxSdkVersion="31" />
-    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
-        android:usesPermissionFlags="neverForLocation" android:minSdkVersion="32" />
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-    <!-- ===== Foreground service ===== -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
-    <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
 
-    <application
-        android:label="PulseMesh"
-        android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
-        android:allowBackup="false">
+      - name: Unpack project and prepare Android
+        run: |
+          test -f pulsemesh.zip || { echo "pulsemesh.zip is missing from the repo root"; exit 1; }
+          rm -rf _build _scaffold
+          mkdir _build
+          unzip -q pulsemesh.zip -d _build
+          flutter create --org com.pulsemesh --project-name pulsemesh --platforms android _scaffold
+          (cd _scaffold && find . -type f) | while read -r f; do
+            if [ ! -e "_build/pulsemesh/$f" ]; then
+              mkdir -p "$(dirname "_build/pulsemesh/$f")"
+              cp "_scaffold/$f" "_build/pulsemesh/$f"
+            fi
+          done
+          rm -rf _build/pulsemesh/test
+          cd _build/pulsemesh
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 24/' android/app/build.gradle.kts || true
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/' android/app/build.gradle || true
+          python3 -c "import xml.dom.minidom as x; x.parse('android/app/src/main/AndroidManifest.xml'); print('manifest OK')"
 
-        <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:launchMode="singleTop"
-            android:theme="@style/LaunchTheme"
-            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-            android:hardwareAccelerated="true"
-            android:windowSoftInputMode="adjustResize">
-            <meta-data android:name="io.flutter.embedding.android.NormalTheme"
-                android:resource="@style/NormalTheme" />
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+      - name: Build release APK
+        working-directory: _build/pulsemesh
+        run: |
+          flutter pub get
+          flutter build apk --release
 
-        <service
-            android:name=".MeshService"
-            android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
-
-        <meta-data android:name="flutterEmbedding" android:value="2" />
-    </application>
-</manifest>
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PulseMesh-apk
+          path: _build/pulsemesh/build/app/outputs/flutter-apk/app-release.apk
