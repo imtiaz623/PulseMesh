@@ -21,19 +21,23 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Prepare Android and Add Permissions
+      - name: Force Recreate Android Scaffold & Add Internet Permission
         run: |
-          # Ensure android scaffold exists and is clean
-          if [ ! -d "android" ]; then
-            flutter create --org com.pulsemesh --project-name pulsemesh --platforms android .
-          fi
+          # Purana kharab android folder mukammal delete kar dein taake fresh build bane
+          rm -rf android
+          flutter create --org com.pulsemesh --project-name pulsemesh --platforms android .
           
-          # Add Internet Permission to AndroidManifest to prevent white screen crashes
+          # Python ke zariye safe tareeqay se internet permission add karein taake XML error na aaye
           MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST_PATH" ]; then
-            if ! grep -q "android.permission.INTERNET" "$MANIFEST_PATH"; then
-              sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>' "$MANIFEST_PATH"
-            fi
+            python3 -c "
+            with open('$MANIFEST_PATH', 'r') as f:
+                content = f.read()
+            if 'android.permission.INTERNET' not in content:
+                content = content.replace('<application', '<uses-permission android:name=\"android.permission.INTERNET\"/>\n    <application')
+                with open('$MANIFEST_PATH', 'w') as f:
+                    f.write(content)
+            "
           fi
 
       - name: Build release APK
