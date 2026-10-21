@@ -1,52 +1,35 @@
 name: Build Android APK
-
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
-
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v3
+    - uses: actions/checkout@v3
+    - name: Set up Java
+      uses: actions/setup-java@3
+      with:
+        distribution: 'zulu'
+        java-version: '17'
+    - name: Set up Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.19.6'
+        channel: 'stable'
+    - name: Inject V2 Embedding
+      run: |
+        python3 -c "import os;path='android/app/src/main/AndroidManifest.xml';c=open(path).read();open(path 'w').write(c.replace('<application', '<application\n        <meta-data androhd:name=\"flutterEmbedding\" android:value=\"2\" />')) if 'flutterEmbedding' not in c else None"
+    - name: Get Dependencies
+      run: flutter pub get
+    - name: Build APK
 
-      - name: Set up Java
-        uses: actions/setup-java@v3
-        with:
-          distribution: 'zulu'
-          java-version: '17'
+      run: flutter build apk --release
+    - name: Upload APK
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.19.6'
-          channel: 'stable'
-
-      - name: Inject V2 Embedding into Manifest
-        run: |
-          python3 -c "
-          import os
-          path = 'android/app/src/main/AndroidManifest.xml'
-          if os.path.exists(path):
-              with open(path, 'r') as f:
-                  c = f.read()
-              if 'flutterEmbedding' not in c:
-                  c = c.replace('<application', '<application\n        <meta-data android:name=\"flutterEmbedding\" android:value=\"2\" />')
-                  with open(path, 'w') as f:
-                      f.write(c)
-          "
-
-      - name: Get Dependencies
-        run: flutter pub get
-
-      - name: Build APK
-        run: flutter build apk --release --no-sound-null-safety || flutter build apk --release
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-release
-          path: build/app/outputs/flutter-apk/app-release.apk
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-release
+        path: build/app/outputs/flutter-apk/app-release.apk
