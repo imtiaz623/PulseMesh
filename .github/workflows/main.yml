@@ -1,35 +1,46 @@
-name: Build Android APK
+name: Build APK
 on:
+  workflow_dispatch:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    branches: [main, master]
+
 jobs:
-  build:
+  apk:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: Set up Java
-      uses: actions/setup-java@3
-      with:
-        distribution: 'zulu'
-        java-version: '17'
-    - name: Set up Flutter
-      uses: subosito/flutter-action@v2
-      with:
-        flutter-version: '3.19.6'
-        channel: 'stable'
-    - name: Inject V2 Embedding
-      run: |
-        python3 -c "import os;path='android/app/src/main/AndroidManifest.xml';c=open(path).read();open(path 'w').write(c.replace('<application', '<application\n        <meta-data androhd:name=\"flutterEmbedding\" android:value=\"2\" />')) if 'flutterEmbedding' not in c else None"
-    - name: Get Dependencies
-      run: flutter pub get
-    - name: Build APK
+      - uses: actions/checkout@v4
 
-      run: flutter build apk --release
-    - name: Upload APK
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
-      uses: actions/upload-artifact@v4
-      with:
-        name: app-release
-        path: build/app/outputs/flutter-apk/app-release.apk
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Unpack PulseMesh and add the Android scaffold
+        run: |
+          unzip -q pulsemesh.zip
+          flutter create --org com.pulsemesh --project-name pulsemesh --platforms android _scaffold
+          rsync -a --ignore-existing _scaffold/ pulsemesh/   # our files win, scaffold fills the rest
+          rm -rf pulsemesh/test
+
+      - name: Set minSdk 24
+        working-directory: pulsemesh
+        run: |
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 24/' android/app/build.gradle.kts || true
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/' android/app/build.gradle || true
+          grep -n "minSdk" android/app/build.gradle* || true
+
+      - name: Build release APK
+        working-directory: pulsemesh
+        run: |
+          flutter pub get
+          flutter build apk --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PulseMesh-apk
+          path: pulsemesh/build/app/outputs/flutter-apk/app-release.apk
