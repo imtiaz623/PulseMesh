@@ -33,6 +33,20 @@ jobs:
           sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 24/' android/app/build.gradle.kts || true
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/' android/app/build.gradle || true
           python3 -c "import xml.dom.minidom as x; x.parse('android/app/src/main/AndroidManifest.xml'); print('manifest OK')"
+      - name: Force newer compileSdk for plugins
+        run: |
+          mkdir -p ~/.gradle
+          cat > ~/.gradle/init.gradle <<'GRADLE'
+          allprojects {
+            afterEvaluate { p ->
+              if (p.plugins.hasPlugin('com.android.library')) {
+                p.extensions.findByName('android')?.compileSdkVersion(36)
+              }
+            }
+          }
+          GRADLE
+          sed -i 's/^          //' ~/.gradle/init.gradle
+          cat ~/.gradle/init.gradle
       - name: Build release APK
         working-directory: _build/pulsemesh
         run: |
