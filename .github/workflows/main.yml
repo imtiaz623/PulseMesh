@@ -1,8 +1,9 @@
 name: Build APK
+
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches: [ main, master ]
 
 jobs:
   apk:
@@ -12,30 +13,15 @@ jobs:
 
       - uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: 'temurin'
           java-version: '17'
 
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          channel: 'stable'
           cache: true
 
-      - name: Unpack PulseMesh and add the Android scaffold
-        run: |
-          unzip -q pulsemesh.zip
-          flutter create --org com.pulsemesh --project-name pulsemesh --platforms android _scaffold
-          rsync -a --ignore-existing _scaffold/ pulsemesh/   # our files win, scaffold fills the rest
-          rm -rf pulsemesh/test
-
-      - name: Set minSdk 24
-        working-directory: pulsemesh
-        run: |
-          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 24/' android/app/build.gradle.kts || true
-          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/' android/app/build.gradle || true
-          grep -n "minSdk" android/app/build.gradle* || true
-
       - name: Build release APK
-        working-directory: pulsemesh
         run: |
           flutter pub get
           flutter build apk --release
@@ -43,4 +29,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: PulseMesh-apk
-          path: pulsemesh/build/app/outputs/flutter-apk/app-release.apk
+          path: build/app/outputs/flutter-apk/app-release.apk
