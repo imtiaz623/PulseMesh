@@ -1,10 +1,51 @@
-name: Build APK
+name: Build OffChat
 on:
   workflow_dispatch:
+    inputs:
+      create_keystore:
+        description: 'Run ONCE: create the Google Play upload key (then follow the steps in the chat)'
+        type: boolean
+        default: false
   push:
     branches: [main, master]
+
 jobs:
-  apk:
+  # ------------------------------------------------------------------
+  # Run this ONCE (Actions -> Build OffChat -> Run workflow -> tick the box).
+  # It makes your upload key. Download the "keystore-secrets" artifact, copy the
+  # 3 values into Settings -> Secrets and variables -> Actions, then DELETE the artifact.
+  # Use a PRIVATE repository for this.
+  # ------------------------------------------------------------------
+  keystore:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.create_keystore }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Create upload keystore
+        run: |
+          PASS=$(openssl rand -hex 12)
+          keytool -genkeypair -v -storetype PKCS12 -keystore upload-keystore.jks -alias upload \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass "$PASS" -keypass "$PASS" -dname "CN=OffChat, O=OffChat, C=PK"
+          {
+            echo "KEYSTORE_BASE64=$(base64 -w0 upload-keystore.jks)"
+            echo "KEYSTORE_PASSWORD=$PASS"
+            echo "KEY_ALIAS=upload"
+          } > keystore-secrets.txt
+          echo "Created. Download the artifact and store these 3 values as GitHub secrets."
+      - uses: actions/upload-artifact@v4
+        with:
+          name: keystore-secrets
+          path: |
+            keystore-secrets.txt
+            upload-keystore.jks
+
+  # ------------------------------------------------------------------
+  build:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.create_keystore) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,9 +55,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # FIX 1: pin Flutter. "channel: stable" jumped to 3.47.x, which is much newer than
-      # the plugin versions in pubspec.yaml (record, camera, audioplayers, nearby_connections...)
-      # were written for. A pinned version gives the same result on every run.
+      # pinned on purpose: "stable" moves and breaks older plugins
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.32.8'
@@ -57,26 +96,68 @@ jobs:
           sed -i 's/^          //' ~/.gradle/init.gradle
           cat ~/.gradle/init.gradle
 
-      - name: Get packages and show resolved versions
+      # Google Play only accepts a bundle signed with YOUR upload key.
+      # Without the 3 secrets the build still works, signed with a debug key (testing only).
+      - name: Set up release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::No signing secrets found. Building with a debug key: fine for testing, Google Play will reject it."
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/upload-keystore.jks"
+          cat > _build/pulsemesh/android/key.properties <<EOF
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=$GITHUB_WORKSPACE/upload-keystore.jks
+          EOF
+          python3 - <<'PY'
+          import os
+          f = '_build/pulsemesh/android/app/build.gradle.kts'
+          if not os.path.exists(f):
+              print('::warning::build.gradle.kts not found, signing not patched')
+              raise SystemExit
+          s = open(f).read()
+          block = '''    signingConfigs {
+              create("upload") {
+                  val kp = java.util.Properties()
+                  kp.load(java.io.FileInputStream(rootProject.file("key.properties")))
+                  keyAlias = kp["keyAlias"] as String
+                  keyPassword = kp["keyPassword"] as String
+                  storeFile = file(kp["storeFile"] as String)
+                  storePassword = kp["storePassword"] as String
+              }
+          }
+          '''
+          if 'create("upload")' not in s:
+              s = s.replace('    buildTypes {', block + '    buildTypes {', 1)
+          s = s.replace('signingConfigs.getByName("debug")', 'signingConfigs.getByName("upload")')
+          open(f, 'w').write(s)
+          print('signing patched')
+          PY
+
+      - name: Get packages
         working-directory: _build/pulsemesh
         run: |
           flutter --version
           flutter pub get
-          echo "---- resolved plugin versions ----"
-          flutter pub deps --no-dev --style=compact | grep -E "record|camera|audioplayers|nearby|permission_handler|sqflite|image_picker" || true
 
-      # FIX 2: shows the exact file:line of any Dart error in the app code, before Gradle hides it.
       - name: Analyze (prints real Dart errors)
         working-directory: _build/pulsemesh
         continue-on-error: true
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
-      # FIX 3: keep the full log and print the real error lines (Gradle's summary hides them).
-      - name: Build release APK
+      # versionCode = run number, so every upload to Google Play is higher than the last
+      - name: Build release APK and Play bundle
         working-directory: _build/pulsemesh
         run: |
           set -o pipefail
-          flutter build apk --release --no-tree-shake-icons --no-shrink -v 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          flutter build apk --release --no-tree-shake-icons --no-shrink --build-number=${{ github.run_number }} -v 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          flutter build appbundle --release --no-tree-shake-icons --no-shrink --build-number=${{ github.run_number }} 2>&1 | tee -a "$GITHUB_WORKSPACE/build.log"
 
       - name: Show real error (only if the build failed)
         if: failure()
@@ -94,5 +175,10 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: PulseMesh-apk
+          name: OffChat-apk
           path: _build/pulsemesh/build/app/outputs/flutter-apk/app-release.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OffChat-play-bundle
+          path: _build/pulsemesh/build/app/outputs/bundle/release/app-release.aab
