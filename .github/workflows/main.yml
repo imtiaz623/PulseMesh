@@ -105,7 +105,7 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::warning::No signing secrets found. Building with a debug key: fine for testing, Google Play will reject it."
+            echo "::warning::No signing secrets found. Every run then uses a NEW random debug key, so a new APK cannot be installed over the old one without uninstalling (chat history lost). Add the 3 secrets once to fix this."
             exit 0
           fi
           echo "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/upload-keystore.jks"
